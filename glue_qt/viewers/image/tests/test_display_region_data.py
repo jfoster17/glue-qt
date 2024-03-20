@@ -6,6 +6,7 @@ import numpy as np
 import shapely
 from shapely.geometry import MultiPolygon, Polygon, Point
 
+from echo import delay_callback
 from glue.core.data_region import RegionData
 from glue.core.data import Data
 from glue.core.component import Component
@@ -40,7 +41,7 @@ class TestRegionScatterViewer(object):
         cell_number = Component(np.array([1, 2, 3]))
 
         self.region_data = RegionData(regions=my_geoms,
-                                      cell_number=cell_number)
+                                      cell_number=cell_number, label='region_data')
 
         random_2d_array = np.random.randint(1, 20, size=(100, 100))
         self.data_2d = Data(label='image_data', z=random_2d_array)
@@ -83,8 +84,8 @@ class TestRegionScatterViewer(object):
         # Check defaults when we add data
 
         self.viewer.add_data(self.data_2d)
-        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[0])
-        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[1])
+        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[1])
+        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[0])
 
         self.data_collection.add_link(link1)
         self.data_collection.add_link(link2)
@@ -128,8 +129,8 @@ class TestRegionScatterViewer(object):
 
         process_events()
 
-        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[0])
-        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[1])
+        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[1])
+        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[0])
 
         self.data_collection.add_link(link1)
         self.data_collection.add_link(link2)
@@ -143,8 +144,8 @@ class TestRegionScatterViewer(object):
         self.viewer.add_data(self.data_2d)
 
         self.viewer.add_data(self.region_data)
-        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[0])
-        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[1])
+        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[1])
+        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[0])
 
         self.data_collection.add_link(link1)
         self.data_collection.add_link(link2)
@@ -153,22 +154,46 @@ class TestRegionScatterViewer(object):
 
         process_events()
 
-        assert self.viewer.layers[0].enabled  # image
-        assert self.viewer.layers[1].enabled  # scatter
-        assert self.viewer.layers[2].enabled  # image subset
-        assert self.viewer.layers[3].enabled  # scatter subset
+        # Images and region layers for base and subset should be enabled
+        assert self.viewer.layers[0].enabled
+        assert self.viewer.layers[1].enabled
+        assert self.viewer.layers[2].enabled
+        assert self.viewer.layers[3].enabled
+
+    def test_region_display_xy_flipped(self):
+        # Test that the region display is updated when the x/y attributes are flipped
+        self.viewer.add_data(self.data_2d)
+
+        self.viewer.add_data(self.region_data)
+        link1 = LinkSame(self.region_data.center_x_id, self.data_2d.pixel_component_ids[1])
+        link2 = LinkSame(self.region_data.center_y_id, self.data_2d.pixel_component_ids[0])
+        self.data_collection.add_link(link1)
+        self.data_collection.add_link(link2)
+        original_pathpatch = self.viewer.layers[1].region_collection.patches[1].get_path().vertices
+
+        with delay_callback(self.viewer.state, 'x_att', 'y_att'):
+            self.viewer.state.x_att = self.data_2d.pixel_component_ids[0]
+            self.viewer.state.y_att = self.data_2d.pixel_component_ids[1]
+        process_events()
+        new_pathpatch = self.viewer.layers[1].region_collection.patches[1].get_path().vertices
+
+        # Because we have flipped the viewer, the patches should have changed
+        assert np.array_equal(original_pathpatch, np.flip(new_pathpatch, axis=1))
 
 
 class TestWCSRegionDisplay(object):
     def setup_method(self, method):
 
         wcs1 = WCS(naxis=2)
-        wcs1.wcs.ctype = 'DEC--TAN', 'RA---TAN'
+        wcs1.wcs.ctype = 'RA---TAN', 'DEC--TAN'
+        wcs1.wcs.crpix = -3, 5
+        wcs1.wcs.cd = [[2, -1], [1, 2]]
+
         wcs1.wcs.set()
 
         self.image1 = Data(label='image1', a=[[3, 3], [2, 2]], b=[[4, 4], [3, 2]],
                             coords=wcs1)
-        SHAPELY_CIRCLE_ARRAY = np.array([Point(2.5, 2.5).buffer(1), Point(1, 1).buffer(1)])
+        SHAPELY_CIRCLE_ARRAY = np.array([Point(1.5, 2.5).buffer(1), Polygon([(1, 1), (2, 2), (2, 3), (1, 3)])])
         self.region_data = RegionData(label='My Regions',
                                       color=np.array(['red', 'blue']),
                                       area=shapely.area(SHAPELY_CIRCLE_ARRAY),
@@ -202,18 +227,30 @@ class TestWCSRegionDisplay(object):
         if len(ARRAY_CACHE) > 0:
             raise Exception("Array cache contains {0} elements".format(len(ARRAY_CACHE)))
 
-    def test_basics(self):
+    def test_flipped_viewer(self):
         self.viewer.add_data(self.image1)
 
-        link1 = LinkSame(self.region_data.center_x_id, self.image1.world_component_ids[0])
-        link2 = LinkSame(self.region_data.center_y_id, self.image1.world_component_ids[1])
+        link1 = LinkSame(self.region_data.center_x_id, self.image1.world_component_ids[1])
+        link2 = LinkSame(self.region_data.center_y_id, self.image1.world_component_ids[0])
 
         self.data_collection.add_link(link1)
         self.data_collection.add_link(link2)
 
         self.viewer.add_data(self.region_data)
+        original_path_patch = self.viewer.layers[1].region_collection.patches[1].get_path().vertices
 
-        self.viewer.state._display_world
+        with delay_callback(self.viewer.state, 'x_att', 'y_att'):
+            self.viewer.state.x_att_world = self.image1.world_component_ids[0]
+            self.viewer.state.y_att_world = self.image1.world_component_ids[1]
+
+        process_events()
+
+        assert self.viewer.state._display_world == True
         assert len(self.viewer.state.layers) == 2
         assert self.viewer.layers[0].enabled
         assert self.viewer.layers[1].enabled
+
+        new_path_patch = self.viewer.layers[1].region_collection.patches[1].get_path().vertices
+
+        # Because we have flipped the viewer, the patches should have changed
+        assert np.array_equal(original_path_patch, np.flip(new_path_patch, axis=1))
