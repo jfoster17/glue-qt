@@ -245,7 +245,7 @@ class TestWCSRegionDisplay(object):
 
         process_events()
 
-        assert self.viewer.state._display_world == True
+        assert self.viewer.state._display_world is True
         assert len(self.viewer.state.layers) == 2
         assert self.viewer.layers[0].enabled
         assert self.viewer.layers[1].enabled
